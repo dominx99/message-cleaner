@@ -2,146 +2,47 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/nlopes/slack"
+
+	auth_token "example.com/auth"
+	message_repo "example.com/messages"
 )
-
-type AuthKey struct {
-	Token string
-	Team  string
-}
-
-func persistTeam(w http.ResponseWriter, token, team string) {
-	db := dynamodb.New(session.New(), &aws.Config{Region: aws.String("us-east-1")})
-
-	del := dynamodb.DeleteItemInput{
-		TableName: aws.String("AuthKey"),
-		Key: map[string]*dynamodb.AttributeValue{
-			"Team": &dynamodb.AttributeValue{
-				S: aws.String(team),
-			},
-			"AuthToken": &dynamodb.AttributeValue{
-				S: aws.String(token),
-			},
-		},
-	}
-
-	resd, err := db.DeleteItem(&del)
-
-	if err != nil {
-		json.NewEncoder(w).Encode(err.Error())
-	} else {
-		json.NewEncoder(w).Encode(resd)
-	}
-
-	put := dynamodb.PutItemInput{
-		TableName: aws.String("AuthKey"),
-		Item: map[string]*dynamodb.AttributeValue{
-			"Team": &dynamodb.AttributeValue{
-				S: aws.String(team),
-			},
-			"AuthToken": &dynamodb.AttributeValue{
-				S: aws.String(token),
-			},
-		},
-	}
-
-	in, err := db.PutItem(&put)
-
-	if err != nil {
-		json.NewEncoder(w).Encode(err.Error())
-		return
-	}
-
-	json.NewEncoder(w).Encode(in)
-}
-
-func findTokenByTeam(team string) *string {
-	db := dynamodb.New(session.New(), &aws.Config{Region: aws.String("us-east-1")})
-
-	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":v1": {
-				S: aws.String(team),
-			},
-		},
-		KeyConditionExpression: aws.String("Team = :v1"),
-		ProjectionExpression:   aws.String("AuthToken"),
-		TableName:              aws.String("AuthKey"),
-	}
-
-	result, err := db.Query(input)
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-
-	return result.Items[0]["AuthToken"].S
-}
 
 func clear(w http.ResponseWriter, req *http.Request) {
 	req.ParseForm()
 
-	var token *string = findTokenByTeam(req.Form.Get("team_id"))
+    accessTokenFinder := auth_token.FindAccessTokenAttributes{
+        Team: req.Form.Get("team_id"),
+    }
 
-	api := slack.New(*token)
+    token, err := accessTokenFinder.GetAccessToken()
 
-	chis, err := api.GetChannelHistory(
-		req.Form.Get("channel_id"),
-		slack.NewHistoryParameters(),
-	)
+    if err != nil {
+        json.NewEncoder(w).Encode("Cannot find access token to your application.")
+    }
+
+	api := slack.New(token)
+
+    m := message_repo.Messages{
+        ChannelID: req.Form.Get("channel_id"),
+        ChannelName: req.Form.Get("channel_name"),
+    }
 
 	var messages []slack.Message
 
-	if err == nil {
-		messages = chis.Messages
-	} else {
-		ghis, err := api.GetGroupHistory(
-			req.Form.Get("channel_id"),
-			slack.NewHistoryParameters(),
-		)
+    loadError := m.Load(api, &messages)
+    deleteError := m.BulkDelete(api, messages)
 
-		if err == nil {
-			messages = ghis.Messages
-		} else {
-			params := slack.GetConversationHistoryParameters{
-				ChannelID: req.Form.Get("channel_id"),
-				Latest:    slack.DEFAULT_HISTORY_LATEST,
-				Oldest:    slack.DEFAULT_HISTORY_OLDEST,
-				Inclusive: slack.DEFAULT_HISTORY_INCLUSIVE,
-				Limit:     100,
-			}
+    if loadError != nil {
+        json.NewEncoder(w).Encode(loadError)
+    }
 
-			cohis, err := api.GetConversationHistory(&params)
-
-			if err == nil {
-				messages = cohis.Messages
-			} else {
-				json.NewEncoder(w).Encode(err.Error())
-			}
-		}
-	}
-
-	for i := 0; i < len(messages); i++ {
-		if messages[i].IsStarred {
-			continue
-		}
-
-		_, _, err := api.DeleteMessage(
-			req.Form.Get("channel_id"),
-			messages[i].Timestamp,
-		)
-
-		if err != nil {
-			json.NewEncoder(w).Encode(err.Error())
-		}
-	}
+    if deleteError != nil {
+        json.NewEncoder(w).Encode(deleteError)
+    }
 }
 
 func redirect(w http.ResponseWriter, req *http.Request) {
@@ -157,13 +58,24 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 
 	if err != nil {
 		json.NewEncoder(w).Encode(err.Error())
+        return
 	}
 
 	var result slack.OAuthResponse
 
 	json.NewDecoder(res.Body).Decode(&result)
 
-	persistTeam(w, result.AccessToken, result.TeamID)
+	p := auth_token.PersistTeamAttributes{
+        Team: result.AccessToken,
+        Token: result.TeamID,
+    }
+
+    _, err = p.Persist()
+
+	if err != nil {
+		json.NewEncoder(w).Encode(err.Error())
+        return
+	}
 
 	if res.StatusCode == 200 {
 		json.NewEncoder(w).Encode("success")
