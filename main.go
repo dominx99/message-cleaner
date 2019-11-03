@@ -9,40 +9,45 @@ import (
 
 	auth_token "example.com/auth"
 	message_repo "example.com/messages"
+	status_repo "example.com/status"
 )
+
+func getApi(teamId string) (*slack.Client, error) {
+	accessTokenFinder := auth_token.FindAccessTokenAttributes{
+		Team: teamId,
+	}
+
+	token, err := accessTokenFinder.GetAccessToken()
+
+	return slack.New(token), err
+}
 
 func clear(w http.ResponseWriter, req *http.Request) {
 	req.ParseForm()
 
-    accessTokenFinder := auth_token.FindAccessTokenAttributes{
-        Team: req.Form.Get("team_id"),
-    }
+	api, err := getApi(req.Form.Get("team_id"))
 
-    token, err := accessTokenFinder.GetAccessToken()
+	if err != nil {
+		json.NewEncoder(w).Encode("Cannot find access token to your application.")
+	}
 
-    if err != nil {
-        json.NewEncoder(w).Encode("Cannot find access token to your application.")
-    }
-
-	api := slack.New(token)
-
-    m := message_repo.Messages{
-        ChannelID: req.Form.Get("channel_id"),
-        ChannelName: req.Form.Get("channel_name"),
-    }
+	m := message_repo.Messages{
+		ChannelID:   req.Form.Get("channel_id"),
+		ChannelName: req.Form.Get("channel_name"),
+	}
 
 	var messages []slack.Message
 
-    loadError := m.Load(api, &messages)
-    deleteError := m.BulkDelete(api, messages)
+	loadError := m.Load(api, &messages)
+	deleteError := m.BulkDelete(api, messages)
 
-    if loadError != nil {
-        json.NewEncoder(w).Encode(loadError)
-    }
+	if loadError != nil {
+		json.NewEncoder(w).Encode(loadError)
+	}
 
-    if deleteError != nil {
-        json.NewEncoder(w).Encode(deleteError)
-    }
+	if deleteError != nil {
+		json.NewEncoder(w).Encode(deleteError)
+	}
 }
 
 func redirect(w http.ResponseWriter, req *http.Request) {
@@ -58,7 +63,7 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 
 	if err != nil {
 		json.NewEncoder(w).Encode(err.Error())
-        return
+		return
 	}
 
 	var result slack.OAuthResponse
@@ -66,15 +71,15 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 	json.NewDecoder(res.Body).Decode(&result)
 
 	p := auth_token.PersistTeamAttributes{
-        Team: result.AccessToken,
-        Token: result.TeamID,
-    }
+		Team:  result.AccessToken,
+		Token: result.TeamID,
+	}
 
-    _, err = p.Persist()
+	_, err = p.Persist()
 
 	if err != nil {
 		json.NewEncoder(w).Encode(err.Error())
-        return
+		return
 	}
 
 	if res.StatusCode == 200 {
@@ -84,8 +89,28 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func setStatus(w http.ResponseWriter, req *http.Request) {
+	req.ParseForm()
+
+	api, err := getApi(req.Form.Get("team_id"))
+
+	if err != nil {
+		json.NewEncoder(w).Encode("Cannot find access token to your application.")
+	}
+
+    s := status_repo.Status{
+        Name: req.Form.Get("text"),
+    }
+    err = s.Set(api)
+
+	if err != nil {
+		json.NewEncoder(w).Encode(err.Error())
+	}
+}
+
 func main() {
 	http.HandleFunc("/", clear)
+	http.HandleFunc("/status", setStatus)
 	http.HandleFunc("/redirect", redirect)
 
 	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
