@@ -7,18 +7,6 @@ type Status struct {
 	Timeout int64 `default0:"3600"`
 }
 
-type errorString struct {
-	S string
-}
-
-func (e *errorString) Error() string {
-	return e.S
-}
-
-func throwError(text string) error {
-	return &errorString{text}
-}
-
 func (s *Status) Set(api *slack.Client) error {
 	var err error
 
