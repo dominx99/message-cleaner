@@ -51,3 +51,37 @@ func (finder FindAccessTokenAttributes) GetAccessToken() (string, error) {
 
 	return *result.Items[0]["AuthToken"].S, err
 }
+
+type DeleteAccessTokenAttributes struct {
+	Team string
+}
+
+func (dt DeleteAccessTokenAttributes) DeleteAccessToken() error {
+	db := dynamodb.New(session.New(), &aws.Config{Region: aws.String("us-east-1")})
+
+	var finder FindAccessTokenAttributes = FindAccessTokenAttributes{
+		Team: dt.Team,
+	}
+
+	token, getErr := finder.GetAccessToken()
+
+	if getErr != nil {
+		return getErr
+	}
+
+	del := dynamodb.DeleteItemInput{
+		TableName: aws.String("AuthKey"),
+		Key: map[string]*dynamodb.AttributeValue{
+			"Team": &dynamodb.AttributeValue{
+				S: aws.String(dt.Team),
+			},
+			"AuthToken": &dynamodb.AttributeValue{
+				S: aws.String(token),
+			},
+		},
+	}
+
+	_, delErr := db.DeleteItem(&del)
+
+	return delErr
+}

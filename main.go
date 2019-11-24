@@ -25,10 +25,13 @@ func getApi(teamId string) (*slack.Client, error) {
 func clear(w http.ResponseWriter, req *http.Request) {
 	req.ParseForm()
 
+	json.NewEncoder(w).Encode(req.Form)
+
 	api, err := getApi(req.Form.Get("team_id"))
 
 	if err != nil {
 		json.NewEncoder(w).Encode("Cannot find access token to your application.")
+		return
 	}
 
 	m := message_repo.Messages{
@@ -70,23 +73,35 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 
 	json.NewDecoder(res.Body).Decode(&result)
 
-	p := auth_token.PersistTeamAttributes{
-		Team:  result.AccessToken,
-		Token: result.TeamID,
+	if !result.Ok {
+		json.NewEncoder(w).Encode("Something went wrong.")
+		return
 	}
 
-	_, err = p.Persist()
+	d := auth_token.DeleteAccessTokenAttributes{
+		Team: result.TeamID,
+	}
 
-	if err != nil {
+	var deleteError error = d.DeleteAccessToken()
+
+	if deleteError != nil {
 		json.NewEncoder(w).Encode(err.Error())
 		return
 	}
 
-	if res.StatusCode == 200 {
-		json.NewEncoder(w).Encode("success")
-	} else {
-		json.NewEncoder(w).Encode("failed")
+	p := auth_token.PersistTeamAttributes{
+		Team:  result.TeamID,
+		Token: result.AccessToken,
 	}
+
+	_, persistError := p.Persist()
+
+	if persistError != nil {
+		json.NewEncoder(w).Encode(err.Error())
+		return
+	}
+
+	json.NewEncoder(w).Encode("success")
 }
 
 func setStatus(w http.ResponseWriter, req *http.Request) {
@@ -98,10 +113,11 @@ func setStatus(w http.ResponseWriter, req *http.Request) {
 		json.NewEncoder(w).Encode("Cannot find access token to your application.")
 	}
 
-    s := status_repo.Status{
-        Name: req.Form.Get("text"),
-    }
-    err = s.Set(api)
+	s := status_repo.Status{
+		Name: req.Form.Get("text"),
+		User: req.Form.Get("user_id"),
+	}
+	err = s.Set(api)
 
 	if err != nil {
 		json.NewEncoder(w).Encode(err.Error())

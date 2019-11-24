@@ -1,6 +1,8 @@
 package message_repo
 
 import (
+	"context"
+
 	"github.com/nlopes/slack"
 )
 
@@ -20,6 +22,7 @@ func (m *Messages) Load(api *slack.Client, messages *[]slack.Message) error {
 		)
 
 		*messages = history.Messages
+
 		messageError = err
 	case "directmessage":
 		params := slack.GetConversationHistoryParameters{
@@ -55,9 +58,11 @@ func (m *Messages) BulkDelete(api *slack.Client, messages []slack.Message) error
 			continue
 		}
 
-		_, _, err := api.DeleteMessage(
+		_, _, _, err := api.SendMessageContext(
+			context.Background(),
 			m.ChannelID,
-			messages[i].Timestamp,
+			slack.MsgOptionDelete(messages[i].Timestamp),
+			slack.MsgOptionAsUser(false),
 		)
 
 		if err != nil {
