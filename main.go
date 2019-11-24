@@ -5,32 +5,12 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/nlopes/slack"
-
+	slack "example.com/api"
 	auth_token "example.com/auth"
-	message_repo "example.com/messages"
-	status_repo "example.com/status"
 )
-
-func getApi(teamId string) (*slack.Client, error) {
-	accessTokenFinder := auth_token.FindAccessTokenAttributes{
-		Team: teamId,
-	}
-
-	token, err := accessTokenFinder.GetAccessToken()
-
-	return slack.New(token), err
-}
 
 func clear(w http.ResponseWriter, req *http.Request) {
 	req.ParseForm()
-
-	api, err := getApi(req.Form.Get("team_id"))
-
-	if err != nil {
-		json.NewEncoder(w).Encode("Cannot find access token to your application.")
-		return
-	}
 
 	accessTokenFinder := auth_token.FindAccessTokenAttributes{
 		Team: req.Form.Get("team_id"),
@@ -38,24 +18,35 @@ func clear(w http.ResponseWriter, req *http.Request) {
 
 	token, err := accessTokenFinder.GetAccessToken()
 
-    if (err != nil) {
-        json.NewEncoder(w).Encode(err.Error())
-    }
-
-	m := message_repo.Messages{
-        Token: token,
-		ChannelID:   req.Form.Get("channel_id"),
-		ChannelName: req.Form.Get("channel_name"),
+	if err != nil {
+		json.NewEncoder(w).Encode("Cannot find access token to your application.")
+		return
 	}
 
-    var history message_repo.History
+	api := slack.Api{
+		Token: token,
+	}
 
-	loadError := m.Load(api, &history)
-    deleteError := m.BulkDelete(api, history)
+	loadParams := slack.HistoryParameters{
+		ChannelName: req.Form.Get("channel_name"),
+		ChannelID:   req.Form.Get("channel_id"),
+	}
+
+	var history slack.History
+
+	loadError := api.GetChannelHistory(loadParams, &history)
 
 	if loadError != nil {
 		json.NewEncoder(w).Encode(loadError.Error())
+		return
 	}
+
+	deleteParams := slack.DeleteMessageHistoryParameters{
+		ChannelName: req.Form.Get("channel_name"),
+		ChannelID:   req.Form.Get("channel_id"),
+	}
+
+	deleteError := api.DeleteNotStarredMessages(deleteParams, history)
 
 	if deleteError != nil {
 		json.NewEncoder(w).Encode(deleteError.Error())
@@ -113,30 +104,8 @@ func redirect(w http.ResponseWriter, req *http.Request) {
 	json.NewEncoder(w).Encode("success")
 }
 
-func setStatus(w http.ResponseWriter, req *http.Request) {
-	req.ParseForm()
-
-	api, err := getApi(req.Form.Get("team_id"))
-
-	if err != nil {
-		json.NewEncoder(w).Encode(err.Error())
-	}
-
-	s := status_repo.Status{
-		Name: req.Form.Get("text"),
-		User: req.Form.Get("user_id"),
-	}
-
-    err = s.Set(api)
-
-	if err != nil {
-		json.NewEncoder(w).Encode(err.Error())
-	}
-}
-
 func main() {
 	http.HandleFunc("/", clear)
-	http.HandleFunc("/status", setStatus)
 	http.HandleFunc("/redirect", redirect)
 
 	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
